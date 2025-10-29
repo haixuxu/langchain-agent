@@ -1,0 +1,33 @@
+{
+  "name": "lanchain-agent",
+  "version": "1.0.0",
+  "description": "A LangChain-js agent with MCP (Model Context Protocol) support",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "langchain",
+    "mcp",
+    "agent",
+    "typescript"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@langchain/mcp-adapters": "^0.6.0",
+    "@langchain/openai": "^0.6.x",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "dotenv": "^17.2.3",
+    "langchain": "^0.3.x",
+    "zod": "^3.23.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}
