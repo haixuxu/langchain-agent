@@ -1,0 +1,21 @@
+{
+    "name": "Node Dev with Zsh",
+    "build": {
+      "dockerfile": "Dockerfile"
+    },
+    "settings": {
+      "terminal.integrated.defaultProfile.linux": "zsh"
+    },
+    "remoteUser": "node",              // 使用 Node 官方镜像中的默认用户
+    "postCreateCommand": "npm install", // 容器启动后执行
+    "extensions": [
+      "dbaeumer.vscode-eslint",
+      "esbenp.prettier-vscode",
+      "ms-vscode.vscode-typescript-next",
+      "eamodio.gitlens"
+    ],
+    "mounts": [
+      "source=${localWorkspaceFolder},target=/workspace,type=bind"
+    ]
+  }
+  
