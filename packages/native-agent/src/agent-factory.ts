@@ -1,4 +1,4 @@
-import { MCPConfig, MCPClientWrapper } from "@langchain-agent/core";
+import { MCPConfig, MCPClientWrapper, AuthorizationPolicy } from "@langchain-agent/core";
 import { NativeTool, convertMCPToolToOpenAIFunction } from "./tool-converter.js";
 import { NativeAgent } from "./native-agent.js";
 
@@ -10,6 +10,7 @@ export interface LLMOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
+  authorizationPolicy?: AuthorizationPolicy;
 }
 
 /**
@@ -76,12 +77,14 @@ export async function createNativeAgentWithMCPTools(
     );
   }
 
-  // 创建原生 Agent
+  // 创建原生 Agent（传入授权策略）
   const agent = new NativeAgent(
     apiKey,
     baseURL,
     llmOptions?.model || process.env.OPENAI_MODEL || "gpt-4o-mini",
-    tools
+    tools,
+    10, // maxIterations
+    llmOptions?.authorizationPolicy
   );
 
   // 清理函数

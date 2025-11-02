@@ -3,7 +3,12 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
 import { DynamicStructuredTool, Tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { MCPConfig, MCPClientWrapper } from "@langchain-agent/core";
+import {
+  MCPConfig,
+  MCPClientWrapper,
+  ToolConfirmationManager,
+  AuthorizationPolicy,
+} from "@langchain-agent/core";
 import { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
 import { loadMcpTools } from "@langchain/mcp-adapters";
 
@@ -15,6 +20,28 @@ export interface LLMOptions {
   temperature?: number;
   apiKey?: string;
   baseURL?: string;
+  authorizationPolicy?: AuthorizationPolicy;
+}
+
+/**
+ * 工具确认上下文（用于在工具执行时访问确认管理器）
+ */
+let globalConfirmationManager: ToolConfirmationManager | null = null;
+
+/**
+ * 设置全局确认管理器
+ */
+export function setGlobalConfirmationManager(
+  manager: ToolConfirmationManager | null
+): void {
+  globalConfirmationManager = manager;
+}
+
+/**
+ * 获取全局确认管理器
+ */
+export function getGlobalConfirmationManager(): ToolConfirmationManager | null {
+  return globalConfirmationManager;
 }
 
 /**
@@ -74,32 +101,91 @@ function convertMCPToolToLangChainTool(
     description: tool.description || `调用 ${serverName} 服务器的 ${tool.name} 工具`,
     schema: z.object(inputSchema),
     func: async (input: any) => {
+      // 获取确认管理器
+      const confirmationManager = getGlobalConfirmationManager();
+
+      // 构建工具调用信息
+      const toolCallInfo = {
+        toolName: toolName,
+        arguments: input,
+        serverName: serverName,
+      };
+
+      // 检查是否需要确认
+      let confirmed = true;
+      if (confirmationManager) {
+        const needsConfirmation =
+          await confirmationManager.shouldConfirm(toolCallInfo);
+
+        if (needsConfirmation) {
+          const confirmation =
+            await confirmationManager.requestConfirmation(toolCallInfo);
+
+          switch (confirmation) {
+            case "yes":
+            case "all":
+              confirmed = true;
+              break;
+            case "no":
+              confirmed = false;
+              break;
+            case "stop":
+              throw new Error("用户停止了对话");
+          }
+        }
+      }
+
+      // 如果未确认，抛出错误
+      if (!confirmed) {
+        throw new Error("用户取消了工具调用");
+      }
+
+      // 显示工具调用信息
+      if (confirmationManager) {
+        confirmationManager.displayToolCall(toolCallInfo, false);
+      }
+
       try {
         const result = await client.callTool(tool.name, input);
         
         // 处理MCP工具返回结果
+        let resultStr: string;
         if (result.content && Array.isArray(result.content)) {
-          return result.content
+          resultStr = result.content
             .map((item: any) => {
               if (typeof item === "string") return item;
               if (item.type === "text" && item.text) return item.text;
               return JSON.stringify(item);
             })
             .join("\n");
-        }
-        
-        if (result.content) {
-          return typeof result.content === "string"
+        } else if (result.content) {
+          resultStr = typeof result.content === "string"
             ? result.content
             : JSON.stringify(result.content);
+        } else {
+          resultStr = JSON.stringify(result);
         }
-        
-        return JSON.stringify(result);
+
+        // 显示工具结果
+        if (confirmationManager) {
+          confirmationManager.displayToolResult(toolCallInfo, resultStr, true);
+        }
+
+        return resultStr;
       } catch (error) {
-        if (error instanceof Error) {
-          throw new Error(`工具调用失败: ${error.message}`);
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        const fullError = `工具调用失败: ${errorMsg}`;
+
+        // 显示错误结果
+        if (confirmationManager) {
+          confirmationManager.displayToolResult(
+            toolCallInfo,
+            fullError,
+            false
+          );
         }
-        throw error;
+
+        throw new Error(fullError);
       }
     },
   });
@@ -116,6 +202,7 @@ export async function createAgentWithMCPTools(
   clients: MCPClientWrapper[];
   cleanup: () => Promise<void>;
   tools: any[]; // 工具列表，用于命令显示
+  confirmationManager: ToolConfirmationManager; // 确认管理器
 }> {
   const clients: MCPClientWrapper[] = [];
   const tools: any[] = [];
@@ -170,6 +257,12 @@ export async function createAgentWithMCPTools(
   if (tools.length === 0) {
     throw new Error("没有成功加载任何MCP工具");
   }
+
+  // 创建确认管理器并设置为全局（用于工具执行时访问）
+  const confirmationManager = new ToolConfirmationManager(
+    llmOptions?.authorizationPolicy
+  );
+  setGlobalConfirmationManager(confirmationManager);
 
   // 创建LLM实例
   const apiKey = llmOptions?.apiKey || process.env.OPENAI_API_KEY;
@@ -231,6 +324,12 @@ export async function createAgentWithMCPTools(
     }
   };
 
-  return { agent, clients, cleanup, tools }; // 返回 tools 以便 list-tools 命令使用
+  return {
+    agent,
+    clients,
+    cleanup,
+    tools,
+    confirmationManager, // 返回确认管理器，以便 REPL 可以设置 readline
+  };
 }
 

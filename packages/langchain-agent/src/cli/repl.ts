@@ -10,7 +10,8 @@ export async function startREPL(
   agent: any, // AgentExecutor 包装的 agent
   config: MCPConfig,
   clients?: any[],
-  tools?: any[]
+  tools?: any[],
+  confirmationManager?: any // ToolConfirmationManager
 ): Promise<void> {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -25,11 +26,19 @@ export async function startREPL(
     tools,
   };
 
+  // 设置 readline 接口到确认管理器（如果存在）
+  if (confirmationManager) {
+    confirmationManager.setReadlineInterface(rl);
+  }
+
   console.log("\n" + "=".repeat(50));
   console.log("🤖 LangChain Agent with MCP Support");
   console.log("=".repeat(50));
   console.log('输入 "/help" 查看可用命令');
   console.log('直接输入问题开始对话\n');
+  if (confirmationManager) {
+    console.log('提示: 工具调用前会请求确认，可以使用 y/n/all/stop 命令\n');
+  }
 
   rl.prompt();
 

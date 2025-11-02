@@ -25,11 +25,15 @@ export async function startReActREPL(
     tools: tools as any,
   };
 
+  // 设置 readline 接口到 agent，以便确认管理器可以询问用户
+  agent.setReadlineInterface(rl);
+
   console.log("\n" + "=".repeat(50));
   console.log("🧠 ReAct Agent with MCP Support (不使用 Function Calling)");
   console.log("=".repeat(50));
   console.log('输入 "/help" 查看可用命令');
   console.log('直接输入问题开始对话\n');
+  console.log('提示: 工具调用前会请求确认，可以使用 y/n/all/stop 命令\n');
 
   rl.prompt();
 

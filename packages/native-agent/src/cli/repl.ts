@@ -25,11 +25,15 @@ export async function startNativeREPL(
     tools: tools as any,
   };
 
+  // 设置 readline 接口到 agent，以便确认管理器可以询问用户
+  agent.setReadlineInterface(rl);
+
   console.log("\n" + "=".repeat(50));
   console.log("🤖 Native Agent with MCP Support (不使用 LangChain)");
   console.log("=".repeat(50));
   console.log('输入 "/help" 查看可用命令');
   console.log('直接输入问题开始对话\n');
+  console.log('提示: 工具调用前会请求确认，可以使用 y/n/all/stop 命令\n');
 
   rl.prompt();
 
@@ -56,36 +60,9 @@ export async function startNativeREPL(
       try {
         const result = await agent.invoke(trimmed);
 
-        // 显示工具调用过程
-        let toolCallsShown = false;
-        for (let i = 0; i < result.messages.length; i++) {
-          const msg = result.messages[i];
-          
-          if (msg.role === "assistant" && msg.tool_calls && msg.tool_calls.length > 0) {
-            if (!toolCallsShown) {
-              console.log("\n🔧 调用工具:");
-              toolCallsShown = true;
-            }
-            for (const toolCall of msg.tool_calls) {
-              console.log(`  - ${toolCall.function.name}`);
-              try {
-                const args = JSON.parse(toolCall.function.arguments);
-                console.log(`    参数: ${JSON.stringify(args, null, 2)}`);
-              } catch {
-                console.log(`    参数: ${toolCall.function.arguments}`);
-              }
-            }
-            console.log();
-          }
-          
-          if (msg.role === "tool" && msg.content) {
-            console.log(`📊 工具结果:\n${msg.content}\n`);
-          }
-        }
-
-        // 显示最终输出
+        // 显示最终输出（工具调用过程已由确认管理器处理）
         if (result.output) {
-          console.log(result.output);
+          console.log("\n" + result.output);
         }
       } catch (error) {
         // 如果 invoke 失败，尝试使用 stream
@@ -101,23 +78,20 @@ export async function startNativeREPL(
               process.stdout.write(chunk.content);
               hasContent = true;
             } else if (chunk.type === "tool_call_start") {
-              if (!toolCallsShown) {
-                console.log("\n\n🔧 调用工具:");
-                toolCallsShown = true;
-              }
-              console.log(`  - ${chunk.tool_call.function.name}`);
-              try {
-                const args = JSON.parse(chunk.tool_call.function.arguments);
-                console.log(`    参数: ${JSON.stringify(args, null, 2)}`);
-              } catch {
-                console.log(`    参数: ${chunk.tool_call.function.arguments}`);
-              }
+              // 工具调用开始（确认管理器会处理确认提示）
+              currentToolCalls.push(chunk.tool_call);
             } else if (chunk.type === "tool_calls") {
               currentToolCalls = chunk.tool_calls;
             } else if (chunk.type === "tool_result") {
-              console.log(`\n📊 工具结果:\n${chunk.result}\n`);
+              // 工具结果（确认管理器已显示，这里不再重复显示）
+              if (chunk.confirmed === false) {
+                console.log(`\n⚠️  工具调用被取消或未确认\n`);
+              }
             } else if (chunk.type === "tool_error") {
               console.log(`\n❌ 工具错误: ${chunk.error}\n`);
+            } else if (chunk.type === "stopped") {
+              console.log(`\n\n${chunk.message}`);
+              hasContent = true; // 标记为有内容，避免显示"无响应"
             }
           }
           

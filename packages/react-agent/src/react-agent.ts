@@ -1,5 +1,9 @@
 import { OpenAI } from "openai";
 import { ReActTool } from "./tool-converter.js";
+import {
+  ToolConfirmationManager,
+  AuthorizationPolicy,
+} from "@langchain-agent/core";
 
 /**
  * 消息类型（简化版，不需要 tool_calls）
@@ -24,7 +28,7 @@ export interface ParsedToolCall {
  * 1. 将工具信息以文本形式放在 system prompt 中
  * 2. 要求 LLM 以特定格式输出工具调用（JSON格式）
  * 3. 解析 LLM 的响应，提取工具调用
- * 4. 执行工具调用
+ * 4. 执行工具调用（带用户确认）
  * 5. 将结果反馈给 LLM
  * 6. 循环直到得到最终答案
  */
@@ -34,13 +38,15 @@ export class ReActAgent {
   private tools: ReActTool[];
   private messages: ReActMessage[];
   private maxIterations: number;
+  private confirmationManager: ToolConfirmationManager;
 
   constructor(
     apiKey: string,
     baseURL: string,
     model: string,
     tools: ReActTool[],
-    maxIterations: number = 10
+    maxIterations: number = 10,
+    authorizationPolicy?: AuthorizationPolicy
   ) {
     this.client = new OpenAI({
       apiKey,
@@ -49,6 +55,7 @@ export class ReActAgent {
     this.model = model;
     this.tools = tools;
     this.maxIterations = maxIterations;
+    this.confirmationManager = new ToolConfirmationManager(authorizationPolicy);
     
     // 构建包含工具信息的 system prompt
     const systemPrompt = this.buildSystemPrompt();
@@ -58,6 +65,20 @@ export class ReActAgent {
         content: systemPrompt,
       },
     ];
+  }
+
+  /**
+   * 设置确认管理器的 readline 接口
+   */
+  setReadlineInterface(rl: any): void {
+    this.confirmationManager.setReadlineInterface(rl);
+  }
+
+  /**
+   * 更新授权策略
+   */
+  updateAuthorizationPolicy(policy: Partial<AuthorizationPolicy>): void {
+    this.confirmationManager.updatePolicy(policy);
   }
 
   /**
@@ -149,9 +170,11 @@ ${toolDescriptions}
   }
 
   /**
-   * 执行工具调用
+   * 执行工具调用（带确认机制）
    */
-  private async executeToolCall(toolCall: ParsedToolCall): Promise<string> {
+  private async executeToolCall(
+    toolCall: ParsedToolCall
+  ): Promise<{ result: string; confirmed: boolean; stop: boolean }> {
     // 查找对应的工具
     const tool = this.tools.find((t) => t.name === toolCall.name);
     
@@ -159,31 +182,100 @@ ${toolDescriptions}
       throw new Error(`工具 ${toolCall.name} 不存在`);
     }
 
+    // 构建工具调用信息
+    const toolCallInfo = {
+      toolName: toolCall.name,
+      arguments: toolCall.arguments,
+      serverName: tool.serverName,
+    };
+
+    // 检查是否需要确认
+    const needsConfirmation = await this.confirmationManager.shouldConfirm(
+      toolCallInfo
+    );
+
+    let confirmed = !needsConfirmation;
+    let stop = false;
+
+    // 如果需要确认，请求用户确认
+    if (needsConfirmation) {
+      const confirmation = await this.confirmationManager.requestConfirmation(
+        toolCallInfo
+      );
+
+      switch (confirmation) {
+        case "yes":
+        case "all":
+          confirmed = true;
+          break;
+        case "no":
+          confirmed = false;
+          return {
+            result: "用户取消了工具调用",
+            confirmed: false,
+            stop: false,
+          };
+        case "stop":
+          confirmed = false;
+          stop = true;
+          return {
+            result: "用户停止了对话",
+            confirmed: false,
+            stop: true,
+          };
+      }
+    }
+
+    // 如果未确认，返回取消消息
+    if (!confirmed) {
+      return {
+        result: "工具调用被取消",
+        confirmed: false,
+        stop: false,
+      };
+    }
+
+    // 显示工具调用信息
+    this.confirmationManager.displayToolCall(toolCallInfo, false);
+
     try {
       // 调用 MCP 工具
       const result = await tool.client.callTool(tool.mcpToolName, toolCall.arguments);
       
       // 处理返回结果
+      let resultStr: string;
       if (result.content && Array.isArray(result.content)) {
-        return result.content
+        resultStr = result.content
           .map((item: any) => {
             if (typeof item === "string") return item;
             if (item.type === "text" && item.text) return item.text;
             return JSON.stringify(item);
           })
           .join("\n");
-      }
-      
-      if (result.content) {
-        return typeof result.content === "string"
+      } else if (result.content) {
+        resultStr = typeof result.content === "string"
           ? result.content
           : JSON.stringify(result.content);
+      } else {
+        resultStr = JSON.stringify(result);
       }
-      
-      return JSON.stringify(result);
+
+      // 显示工具结果
+      this.confirmationManager.displayToolResult(toolCallInfo, resultStr, true);
+
+      return {
+        result: resultStr,
+        confirmed: true,
+        stop: false,
+      };
     } catch (error) {
       const errorMsg = error instanceof Error ? error.message : String(error);
-      throw new Error(`工具调用失败: ${errorMsg}`);
+      const fullError = `工具调用失败: ${errorMsg}`;
+      
+      // 显示错误结果
+      this.confirmationManager.displayToolResult(toolCallInfo, fullError, false);
+
+      throw new Error(fullError);
     }
   }
 
@@ -241,12 +333,21 @@ ${toolDescriptions}
 
       // 执行工具调用
       try {
-        const toolResult = await this.executeToolCall(toolCall);
+        const executionResult = await this.executeToolCall(toolCall);
+
+        // 如果用户要求停止，提前退出
+        if (executionResult.stop) {
+          this.messages = conversationMessages;
+          return {
+            output: "用户停止了对话",
+            messages: conversationMessages,
+          };
+        }
 
         // 添加工具结果消息
         conversationMessages.push({
           role: "user",
-          content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${toolResult}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
+          content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${executionResult.result}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
         });
       } catch (error) {
         // 添加错误消息
@@ -344,18 +445,29 @@ ${toolDescriptions}
           tool_call: toolCall,
         };
 
-        const toolResult = await this.executeToolCall(toolCall);
+        const executionResult = await this.executeToolCall(toolCall);
+
+        // 如果用户要求停止，提前退出
+        if (executionResult.stop) {
+          yield {
+            type: "stopped",
+            message: "用户停止了对话",
+          };
+          this.messages = conversationMessages;
+          return;
+        }
 
         yield {
           type: "tool_result",
           tool_call: toolCall,
-          result: toolResult,
+          result: executionResult.result,
+          confirmed: executionResult.confirmed,
         };
 
         // 添加工具结果消息
         conversationMessages.push({
           role: "user",
-          content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${toolResult}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
+          content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${executionResult.result}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
         });
       } catch (error) {
         const errorMsg = error instanceof Error ? error.message : String(error);
