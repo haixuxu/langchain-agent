@@ -37,9 +37,16 @@ commands.set("list-tools", async (args, context) => {
   console.log("\n可用工具:");
   console.log("=".repeat(50));
   tools.forEach((tool: any, index: number) => {
-    console.log(`${index + 1}. ${tool.name}`);
-    if (tool.description) {
-      console.log(`   描述: ${tool.description}`);
+    // 兼容不同的工具格式
+    const toolName = tool.name || tool.function?.name || `工具 ${index + 1}`;
+    const toolDesc = tool.description || tool.function?.description || "无描述";
+    console.log(`${index + 1}. ${toolName}`);
+    if (toolDesc && toolDesc !== "无描述") {
+      console.log(`   描述: ${toolDesc}`);
+    }
+    // 如果是原生工具，显示更多信息
+    if (tool.serverName && tool.mcpToolName) {
+      console.log(`   来源: ${tool.serverName} / ${tool.mcpToolName}`);
     }
   });
   console.log("=".repeat(50));
