@@ -1,0 +1,58 @@
+import { config } from "dotenv";
+import { resolve } from "path";
+import { loadMCPConfig } from "@langchain-agent/core";
+import { createReActAgentWithMCPTools } from "./agent-factory.js";
+import { startReActREPL } from "./cli/repl.js";
+
+// 加载 .env 文件（从当前工作目录）
+config({ path: resolve(process.cwd(), ".env") });
+
+/**
+ * 主函数
+ */
+async function main() {
+  try {
+    console.log("正在加载MCP配置...");
+    const config = await loadMCPConfig();
+
+    console.log(`已加载 ${config.mcpServers.length} 个MCP服务器配置`);
+    
+    console.log("正在初始化 ReAct Agent（不使用 Function Calling）...");
+    const { agent, clients, cleanup, tools } = await createReActAgentWithMCPTools(config, {
+      model: process.env.OPENAI_MODEL || "gpt-4o-mini",
+      temperature: parseFloat(process.env.OPENAI_TEMPERATURE || "0"),
+    });
+
+    console.log("ReAct Agent 初始化完成！\n");
+    console.log("提示：此 Agent 不使用 Function Calling，而是通过文本指令让 LLM 输出工具调用。\n");
+
+    // 设置优雅退出
+    const gracefulExit = async () => {
+      console.log("\n\n正在清理资源...");
+      await cleanup();
+      process.exit(0);
+    };
+
+    process.on("SIGINT", gracefulExit);
+    process.on("SIGTERM", gracefulExit);
+
+    // 启动REPL
+    await startReActREPL(agent, config, clients, tools);
+  } catch (error) {
+    console.error("\n❌ 程序启动失败:");
+    if (error instanceof Error) {
+      console.error(`   错误: ${error.message}`);
+      if (error.stack && process.env.DEBUG === "true") {
+        console.error("\n堆栈跟踪:");
+        console.error(error.stack);
+      }
+    } else {
+      console.error(error);
+    }
+    process.exit(1);
+  }
+}
+
+// 运行主函数
+main();
+

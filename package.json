@@ -8,8 +8,10 @@
     "build": "pnpm -r build",
     "dev:langchain": "pnpm --filter langchain-agent dev",
     "dev:native": "pnpm --filter native-agent dev",
+    "dev:react": "pnpm --filter react-agent dev",
     "build:langchain": "pnpm --filter langchain-agent build",
-    "build:native": "pnpm --filter native-agent build"
+    "build:native": "pnpm --filter native-agent build",
+    "build:react": "pnpm --filter react-agent build"
   },
   "keywords": [
     "langchain",
