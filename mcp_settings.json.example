@@ -1,42 +1,7 @@
 {
   "mcpServers": {
-    "math-server": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-math"
-      ],
-      "restart": {
-        "enabled": true,
-        "maxAttempts": 3,
-        "delayMs": 1000
-      }
-    },
-    "filesystem-server": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-filesystem",
-        "/path/to/allowed/directory"
-      ]
-    },
-    "http-server": {
-      "url": "https://example.com/mcp",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      },
-      "reconnect": {
-        "enabled": true,
-        "maxAttempts": 5,
-        "delayMs": 2000
-      }
-    },
-    "sse-server": {
-      "url": "https://example.com/mcp/sse",
-      "transport": "sse",
-      "headers": {
-        "Authorization": "Bearer YOUR_TOKEN"
-      }
+    "context7": {
+      "url": "https://mcp.context7.com/mcp"
     }
   }
 }

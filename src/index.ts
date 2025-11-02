@@ -17,7 +17,7 @@ async function main() {
     console.log(`已加载 ${config.mcpServers.length} 个MCP服务器配置`);
     
     console.log("正在初始化Agent...");
-    const { agent, clients, cleanup } = await createAgentWithMCPTools(config, {
+    const { agent, clients, cleanup, tools } = await createAgentWithMCPTools(config, {
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       temperature: parseFloat(process.env.OPENAI_TEMPERATURE || "0"),
     });
@@ -35,7 +35,7 @@ async function main() {
     process.on("SIGTERM", gracefulExit);
 
     // 启动REPL
-    await startREPL(agent, config, clients);
+    await startREPL(agent, config, clients, tools);
   } catch (error) {
     console.error("\n❌ 程序启动失败:");
     if (error instanceof Error) {

@@ -4,9 +4,10 @@ import { MCPConfig } from "../types/mcp-config.js";
  * REPL上下文
  */
 export interface REPLContext {
-  agent: any; // createToolCallingAgent 返回的是 Runnable 类型，不是 Agent
+  agent: any; // AgentExecutor 包装的 agent
   config: MCPConfig;
   clients?: any[];
+  tools?: any[]; // 工具列表
 }
 
 /**
@@ -26,7 +27,8 @@ export const commands = new Map<string, CommandHandler>();
  * 列出所有可用工具
  */
 commands.set("list-tools", async (args, context) => {
-  const tools = context.agent.getTools?.() || [];
+  // 优先使用 context 中的 tools，否则尝试从 agent 获取
+  const tools = context.tools || context.agent.tools || context.agent.getTools?.() || [];
   if (tools.length === 0) {
     console.log("当前没有可用的工具");
     return;

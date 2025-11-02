@@ -1,7 +1,7 @@
-import { Agent, createToolCallingAgent } from "langchain/agents";
+import { createToolCallingAgent, AgentExecutor } from "langchain/agents";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
-import { StructuredTool } from "@langchain/core/tools";
+import { DynamicStructuredTool, Tool } from "@langchain/core/tools";
 import { z } from "zod";
 import { MCPConfig } from "../types/mcp-config.js";
 import { MCPClientWrapper } from "../mcp/mcp-client.js";
@@ -15,6 +15,7 @@ export interface LLMOptions {
   model?: string;
   temperature?: number;
   apiKey?: string;
+  baseURL?: string;
 }
 
 /**
@@ -24,7 +25,7 @@ function convertMCPToolToLangChainTool(
   tool: MCPTool,
   client: MCPClientWrapper,
   serverName: string
-): StructuredTool {
+): DynamicStructuredTool {
   // 转换输入schema
   const inputSchema: Record<string, any> = {};
   if (tool.inputSchema && typeof tool.inputSchema === "object") {
@@ -69,7 +70,7 @@ function convertMCPToolToLangChainTool(
 
   const toolName = `${serverName}_${tool.name}`;
   
-  return new StructuredTool({
+  return new DynamicStructuredTool({
     name: toolName,
     description: tool.description || `调用 ${serverName} 服务器的 ${tool.name} 工具`,
     schema: z.object(inputSchema),
@@ -112,12 +113,13 @@ export async function createAgentWithMCPTools(
   config: MCPConfig,
   llmOptions?: LLMOptions
 ): Promise<{
-  agent: any; // createToolCallingAgent 返回的是 Runnable 类型，不是 Agent
+  agent: any; // AgentExecutor 包装的 agent
   clients: MCPClientWrapper[];
   cleanup: () => Promise<void>;
+  tools: any[]; // 工具列表，用于命令显示
 }> {
   const clients: MCPClientWrapper[] = [];
-  const tools: StructuredTool[] = [];
+  const tools: any[] = [];
 
   // 初始化所有MCP客户端
   for (const serverConfig of config.mcpServers) {
@@ -127,7 +129,7 @@ export async function createAgentWithMCPTools(
       clients.push(client);
 
       // 尝试使用官方适配器
-      let serverTools: StructuredTool[] = [];
+      let serverTools: any[] = [];
       
       try {
         const mcpTools = await loadMcpTools(
@@ -140,7 +142,7 @@ export async function createAgentWithMCPTools(
             useStandardContentBlocks: false,
           }
         );
-        serverTools = mcpTools;
+        serverTools = mcpTools as any[];
       } catch (error) {
         console.warn(
           `使用官方适配器加载 ${serverConfig.name} 的工具失败，改用手动转换:`,
@@ -172,30 +174,51 @@ export async function createAgentWithMCPTools(
 
   // 创建LLM实例
   const apiKey = llmOptions?.apiKey || process.env.OPENAI_API_KEY;
+  const baseURL = llmOptions?.baseURL || process.env.OPENAI_BASE_URL||"https://api.openai.com/v1";
   if (!apiKey) {
     throw new Error(
       "缺少 OpenAI API Key。请设置 OPENAI_API_KEY 环境变量或在配置中提供"
     );
   }
 
+  // 检查是否为占位符
+  if (apiKey.includes("your-") || apiKey.includes("placeholder") || apiKey.length < 20) {
+    throw new Error(
+      `❌ 检测到无效的 API Key。请在 .env 文件中设置有效的 OPENAI_API_KEY。\n` +
+      `   当前值: ${apiKey.substring(0, 20)}...\n` +
+      `   请将 .env 文件中的 OPENAI_API_KEY 替换为您的真实 API key。`
+    );
+  }
+
   const llm = new ChatOpenAI({
+    configuration: {
+      baseURL: baseURL
+    },
     model: llmOptions?.model || "gpt-4o-mini",
     temperature: llmOptions?.temperature ?? 0,
     openAIApiKey: apiKey,
   });
 
-  // 创建prompt
+  // 创建prompt模板
   const prompt = ChatPromptTemplate.fromMessages([
     ["system", "你是一个有用的AI助手。你可以使用工具来回答问题。"],
     ["human", "{input}"],
     ["placeholder", "{agent_scratchpad}"],
   ]);
 
-  // 创建Agent
-  const agent = await createToolCallingAgent({
+  // 使用 createToolCallingAgent（0.3.x 版本的 API）
+  // 注意：不要绑定 tools 到 LLM，createToolCallingAgent 会处理
+  const agentRunnable = await createToolCallingAgent({
     llm,
     tools,
     prompt,
+  });
+
+  // 使用 AgentExecutor 包装 agent，这样才能正确执行工具调用
+  const agent = new AgentExecutor({
+    agent: agentRunnable,
+    tools,
+    verbose: false,
   });
 
   // 清理函数
@@ -209,6 +232,6 @@ export async function createAgentWithMCPTools(
     }
   };
 
-  return { agent, clients, cleanup };
+  return { agent, clients, cleanup, tools }; // 返回 tools 以便 list-tools 命令使用
 }
 
