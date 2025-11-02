@@ -8,6 +8,11 @@
     },
     "remoteUser": "node",              // 使用 Node 官方镜像中的默认用户
     "postCreateCommand": "npm install", // 容器启动后执行
+    "remoteEnv": {
+      "LANG": "zh_CN.UTF-8",
+      "LC_ALL": "zh_CN.UTF-8",
+      "LANGUAGE": "zh_CN:en"
+    },
     "extensions": [
       "dbaeumer.vscode-eslint",
       "esbenp.prettier-vscode",

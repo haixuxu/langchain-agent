@@ -15,10 +15,14 @@ RUN apt-get update && apt-get install -y \
     locales \
     && rm -rf /var/lib/apt/lists/*
 
-# 设置本地语言，避免一些 CLI 提示乱码
-RUN locale-gen en_US.UTF-8
-ENV LANG=en_US.UTF-8
-ENV LC_ALL=en_US.UTF-8
+# 设置本地语言，支持中文
+RUN echo "en_US.UTF-8 UTF-8" > /etc/locale.gen && \
+    echo "zh_CN.UTF-8 UTF-8" >> /etc/locale.gen && \
+    locale-gen && \
+    update-locale LANG=zh_CN.UTF-8 LC_ALL=zh_CN.UTF-8
+ENV LANG=zh_CN.UTF-8
+ENV LC_ALL=zh_CN.UTF-8
+ENV LANGUAGE=zh_CN:en
 
 # 安装 oh-my-zsh 为 node 用户
 # 设置 root 和 node 用户的默认 shell 为 zsh
