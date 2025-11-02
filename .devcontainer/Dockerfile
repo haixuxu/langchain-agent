@@ -1,5 +1,9 @@
 # .devcontainer/Dockerfile
-FROM node:20-bullseye
+FROM node:20-bullseye-slim
+
+# 使用 USTC Debian 镜像源加速
+RUN sed -i 's/deb.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list && \
+    sed -i 's/security.debian.org/mirrors.ustc.edu.cn/g' /etc/apt/sources.list
 
 # 安装 zsh 和常用工具
 RUN apt-get update && apt-get install -y \
@@ -19,9 +23,9 @@ ENV LC_ALL=en_US.UTF-8
 # 安装 oh-my-zsh 为 node 用户
 # 设置 root 和 node 用户的默认 shell 为 zsh
 RUN chsh -s $(which zsh) root && chsh -s $(which zsh) node
-# 为 node 用户安装 oh-my-zsh（手动安装方式，更可靠）
+# 为 node 用户安装 oh-my-zsh（使用 Gitee 镜像加速）
 RUN mkdir -p /home/node/.oh-my-zsh && \
-    git clone https://github.com/ohmyzsh/ohmyzsh.git /home/node/.oh-my-zsh && \
+    git clone --depth=1 https://gitee.com/mirrors/oh-my-zsh.git /home/node/.oh-my-zsh && \
     cp /home/node/.oh-my-zsh/templates/zshrc.zsh-template /home/node/.zshrc && \
     sed -i 's/^ZSH_THEME=.*/ZSH_THEME="robbyrussell"/' /home/node/.zshrc && \
     chown -R node:node /home/node/.oh-my-zsh /home/node/.zshrc
