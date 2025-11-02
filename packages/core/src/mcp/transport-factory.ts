@@ -1,4 +1,4 @@
-import { ClientTransport } from "@modelcontextprotocol/sdk/client/index.js";
+import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
@@ -9,7 +9,7 @@ import { MCPServerConfig } from "../types/mcp-config.js";
  */
 export async function createTransport(
   config: MCPServerConfig
-): Promise<ClientTransport> {
+): Promise<Transport> {
   switch (config.transport) {
     case "stdio": {
       if (!config.command) {

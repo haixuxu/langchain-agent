@@ -1,10 +1,6 @@
 import { readFileSync } from "fs";
-import { join, dirname } from "path";
-import { fileURLToPath } from "url";
+import { join, resolve } from "path";
 import { MCPConfig, RawMCPConfig, MCPConfigSchema, MCPServerConfig } from "../types/mcp-config.js";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = dirname(__filename);
 
 /**
  * 从环境变量加载配置文件路径
@@ -12,12 +8,11 @@ const __dirname = dirname(__filename);
 function getConfigPath(): string {
   const envPath = process.env.MCP_CONFIG_PATH;
   if (envPath) {
-    return envPath;
+    return resolve(envPath);
   }
   
-  // 默认查找项目根目录下的 mcp_settings.json
-  const projectRoot = join(__dirname, "../..");
-  return join(projectRoot, "mcp_settings.json");
+  // 默认从当前工作目录查找 mcp_settings.json
+  return resolve(process.cwd(), "mcp_settings.json");
 }
 
 /**
@@ -106,5 +101,4 @@ function applyEnvOverrides(config: any): any {
   // 例如：MCP_SERVER_0_URL 覆盖第一个服务器的URL
   return config;
 }
-
 

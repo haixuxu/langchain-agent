@@ -1,0 +1,32 @@
+{
+  "name": "native-agent",
+  "version": "1.0.0",
+  "description": "Native OpenAI agent implementation with MCP support (without LangChain)",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "cd ../.. && tsx packages/native-agent/src/index.ts"
+  },
+  "keywords": [
+    "openai",
+    "mcp",
+    "agent",
+    "typescript",
+    "native"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@langchain-agent/core": "workspace:*",
+    "dotenv": "^17.2.3",
+    "openai": "^6.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.0.0",
+    "typescript": "^5.6.0"
+  }
+}
+

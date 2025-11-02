@@ -1,32 +1,54 @@
-feat: 添加原生 Agent 实现（不使用 LangChain）
+refactor: 重构为 monorepo 架构，分离 LangChain 和 Native 实现
 
-实现了完全独立于 LangChain 的原生 Agent，直接使用 OpenAI API 和 MCP 工具。
+将项目重构为 monorepo 结构，使用 pnpm workspaces 管理多个包。
 
 主要变更：
-- 新增 src/agent/native/ 目录，包含原生 Agent 实现
-  - tool-converter.ts: MCP 工具到 OpenAI Function 格式转换器
-  - native-agent.ts: 核心 Agent 类，实现工具调用循环逻辑
-  - agent-factory.ts: Agent 创建工厂函数
-  - repl.ts: REPL 交互界面
-  - index.ts: 独立入口文件
-  - README.md: 使用说明文档
 
-- 更新 package.json
-  - 添加 openai 依赖
-  - 新增 npm run native 和 npm run native:build 脚本
+1. Monorepo 结构
+   - 创建 pnpm-workspace.yaml，配置 workspace
+   - 更新根目录 package.json，添加 monorepo 脚本
+   - 更新 tsconfig.json 为项目引用模式
+   - 更新 .gitignore，添加 packages/*/node_modules 和 .pnpm-store
 
-- 更新 src/cli/commands.ts
-  - 改进 /list-tools 命令，支持原生 Agent 的工具列表格式
-  - 显示工具来源信息（服务器名称/MCP 工具名称）
+2. 创建共享核心包 (packages/core)
+   - MCP 客户端封装 (mcp/mcp-client.ts)
+   - 传输层工厂 (mcp/transport-factory.ts)
+   - 配置加载器 (config/mcp-config.ts)
+   - 类型定义 (types/mcp-config.ts)
+   - CLI 命令处理 (cli/commands.ts)
+   - 统一导出入口 (index.ts)
+   - 修复 Transport 类型导入（从 shared/transport 导入）
 
-功能特性：
-- ✅ 直接使用 OpenAI API，不依赖 LangChain
-- ✅ 支持 MCP 工具自动发现和加载
-- ✅ 实现完整的工具调用循环（Tool Calling Loop）
-- ✅ 支持流式和非流式输出
-- ✅ 与现有 LangChain Agent 功能完全兼容
-- ✅ 使用相同的配置文件和环境变量
+3. LangChain Agent 包 (packages/langchain-agent)
+   - 迁移 agent-factory.ts
+   - 迁移 CLI REPL (cli/repl.ts)
+   - 迁移主入口文件 (index.ts)
+   - 更新导入路径，使用 @langchain-agent/core
+   - 修复 .env 文件读取路径，使用 process.cwd()
+
+4. Native Agent 包 (packages/native-agent)
+   - 迁移所有原生 Agent 实现
+   - 修复 OpenAI SDK 工具调用类型问题
+   - 修复 .env 文件读取路径，使用 process.cwd()
+   - 更新导入路径，使用 @langchain-agent/core
+
+5. 配置文件读取修复
+   - .env 文件从 process.cwd() 读取（而不是相对路径）
+   - mcp_settings.json 从 process.cwd() 读取
+   - 更新包的 dev 脚本，切换到根目录执行
+
+6. 其他改进
+   - 更新 README.md，添加 monorepo 使用说明
+   - 创建 MIGRATION.md，说明迁移内容
+   - 修复所有 TypeScript 编译错误
+   - 所有包都能成功构建
+
+包结构：
+- packages/core: 共享核心功能
+- packages/langchain-agent: LangChain 实现
+- packages/native-agent: Native OpenAI 实现
 
 使用方法：
-  npm run native          # 开发模式运行原生 Agent
-  npm run native:build    # 编译后运行
+  npm run dev:langchain  # 开发模式运行 LangChain Agent
+  npm run dev:native     # 开发模式运行 Native Agent
+  pnpm build             # 构建所有包

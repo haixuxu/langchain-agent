@@ -1,5 +1,4 @@
-import { MCPConfig } from "../../types/mcp-config.js";
-import { MCPClientWrapper } from "../../mcp/mcp-client.js";
+import { MCPConfig, MCPClientWrapper } from "@langchain-agent/core";
 import { NativeTool, convertMCPToolToOpenAIFunction } from "./tool-converter.js";
 import { NativeAgent } from "./native-agent.js";
 

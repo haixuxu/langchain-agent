@@ -1,10 +1,11 @@
 import { config } from "dotenv";
-import { loadMCPConfig } from "../../config/mcp-config.js";
-import { createNativeAgentWithMCPTools } from "./agent-factory.js";
-import { startNativeREPL } from "./repl.js";
+import { resolve } from "path";
+import { loadMCPConfig } from "@langchain-agent/core";
+import { createAgentWithMCPTools } from "./agent-factory.js";
+import { startREPL } from "./cli/repl.js";
 
-// 加载 .env 文件
-config();
+// 加载 .env 文件（从当前工作目录）
+config({ path: resolve(process.cwd(), ".env") });
 
 /**
  * 主函数
@@ -16,13 +17,13 @@ async function main() {
 
     console.log(`已加载 ${config.mcpServers.length} 个MCP服务器配置`);
     
-    console.log("正在初始化原生 Agent...");
-    const { agent, clients, cleanup, tools } = await createNativeAgentWithMCPTools(config, {
+    console.log("正在初始化Agent...");
+    const { agent, clients, cleanup, tools } = await createAgentWithMCPTools(config, {
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
       temperature: parseFloat(process.env.OPENAI_TEMPERATURE || "0"),
     });
 
-    console.log("原生 Agent 初始化完成！\n");
+    console.log("Agent初始化完成！\n");
 
     // 设置优雅退出
     const gracefulExit = async () => {
@@ -35,7 +36,7 @@ async function main() {
     process.on("SIGTERM", gracefulExit);
 
     // 启动REPL
-    await startNativeREPL(agent, config, clients, tools);
+    await startREPL(agent, config, clients, tools);
   } catch (error) {
     console.error("\n❌ 程序启动失败:");
     if (error instanceof Error) {

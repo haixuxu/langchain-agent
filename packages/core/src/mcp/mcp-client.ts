@@ -1,5 +1,5 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { ClientTransport } from "@modelcontextprotocol/sdk/client/index.js";
+import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { Tool } from "@modelcontextprotocol/sdk/types.js";
 import { MCPServerConfig } from "../types/mcp-config.js";
 import { createTransport } from "./transport-factory.js";
@@ -10,7 +10,7 @@ import { createTransport } from "./transport-factory.js";
  */
 export class MCPClientWrapper {
   private client: Client;
-  private transport: ClientTransport;
+  private transport: Transport;
   private config: MCPServerConfig;
   private connected: boolean = false;
 

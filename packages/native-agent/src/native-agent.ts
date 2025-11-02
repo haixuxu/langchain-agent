@@ -154,14 +154,28 @@ export class NativeAgent {
       conversationMessages.push({
         role: "assistant",
         content: assistantMessage.content,
-        tool_calls: assistantMessage.tool_calls?.map((tc) => ({
-          id: tc.id,
-          type: tc.type as "function",
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
+        tool_calls: assistantMessage.tool_calls?.map((tc) => {
+          // 处理函数类型工具调用
+          if (tc.type === "function" && "function" in tc) {
+            return {
+              id: tc.id,
+              type: "function" as const,
+              function: {
+                name: (tc as any).function.name,
+                arguments: (tc as any).function.arguments,
+              },
+            };
+          }
+          // 处理其他类型的工具调用
+          return {
+            id: tc.id,
+            type: "function" as const,
+            function: {
+              name: (tc as any).function?.name || "",
+              arguments: (tc as any).function?.arguments || "{}",
+            },
+          };
+        }),
       });
 
       // 如果没有工具调用，返回最终结果
@@ -178,14 +192,21 @@ export class NativeAgent {
       // 执行所有工具调用
       for (const toolCall of assistantMessage.tool_calls) {
         try {
-          const toolResult = await this.executeToolCall({
+          // 处理不同类型的工具调用
+          const toolCallData: ToolCall = {
             id: toolCall.id,
-            type: toolCall.type as "function",
+            type: "function",
             function: {
-              name: toolCall.function.name,
-              arguments: toolCall.function.arguments,
+              name: toolCall.type === "function" && "function" in toolCall 
+                ? (toolCall as any).function.name
+                : (toolCall as any).function?.name || "",
+              arguments: toolCall.type === "function" && "function" in toolCall
+                ? (toolCall as any).function.arguments
+                : (toolCall as any).function?.arguments || "{}",
             },
-          });
+          };
+          
+          const toolResult = await this.executeToolCall(toolCallData);
 
           // 添加工具结果消息
           conversationMessages.push({

@@ -3,8 +3,7 @@ import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
 import { DynamicStructuredTool, Tool } from "@langchain/core/tools";
 import { z } from "zod";
-import { MCPConfig } from "../types/mcp-config.js";
-import { MCPClientWrapper } from "../mcp/mcp-client.js";
+import { MCPConfig, MCPClientWrapper } from "@langchain-agent/core";
 import { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
 import { loadMcpTools } from "@langchain/mcp-adapters";
 

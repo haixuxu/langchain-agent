@@ -1,8 +1,7 @@
 import * as readline from "readline";
-import { NativeAgent } from "./native-agent.js";
-import { MCPConfig } from "../../types/mcp-config.js";
-import { NativeTool } from "./tool-converter.js";
-import { REPLContext, handleCommand } from "../../cli/commands.js";
+import { NativeAgent } from "../native-agent.js";
+import { MCPConfig, REPLContext, handleCommand } from "@langchain-agent/core";
+import { NativeTool } from "../tool-converter.js";
 
 /**
  * 启动交互式REPL（原生 Agent 版本）

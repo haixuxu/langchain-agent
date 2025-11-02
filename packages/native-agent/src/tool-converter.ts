@@ -1,5 +1,5 @@
 import { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
-import { MCPClientWrapper } from "../../mcp/mcp-client.js";
+import { MCPClientWrapper } from "@langchain-agent/core";
 
 /**
  * OpenAI Function 格式
