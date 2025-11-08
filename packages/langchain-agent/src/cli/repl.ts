@@ -1,6 +1,5 @@
 import * as readline from "readline";
 // Agent 类型已改为 any，因为 createToolCallingAgent 返回的是 Runnable 类型
-import { HumanMessage } from "@langchain/core/messages";
 import { MCPConfig, REPLContext, handleCommand } from "@langchain-agent/core";
 
 /**
