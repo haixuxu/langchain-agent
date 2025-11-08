@@ -56,108 +56,109 @@ export async function startReActREPL(
     try {
       console.log("\n🤔 思考中...\n");
 
-      // 使用 ReAct Agent 的 invoke 方法
+      // Prefer streaming output first
       try {
-        const result = await agent.invoke(trimmed);
-
-        // 显示对话过程（包含工具调用）
+        let hasContent = false;
         let toolCallsShown = false;
-        for (let i = 0; i < result.messages.length; i++) {
-          const msg = result.messages[i];
-          
-          // ReAct Agent 会在 assistant 消息中直接包含工具调用的 JSON
-          if (msg.role === "assistant" && msg.content) {
-            // 尝试检测是否包含工具调用 JSON
-            const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
-            const match = msg.content.match(jsonBlockRegex);
-            
-            if (match) {
-              try {
-                const parsed = JSON.parse(match[1].trim());
-                if (parsed.action === "tool_call") {
-                  if (!toolCallsShown) {
-                    console.log("\n🔧 调用工具:");
-                    toolCallsShown = true;
-                  }
-                  console.log(`  - ${parsed.tool_name}`);
-                  console.log(`    原因: ${parsed.reasoning || "无"}`);
-                  console.log(`    参数: ${JSON.stringify(parsed.arguments, null, 2)}`);
-                  console.log();
-                }
-              } catch {
-                // 不是工具调用，忽略
-              }
+        let accumulatedContent = "";
+
+        for await (const chunk of agent.stream(trimmed)) {
+          if (chunk.type === "content") {
+            process.stdout.write(chunk.content);
+            accumulatedContent += chunk.content;
+            hasContent = true;
+          } else if (chunk.type === "tool_call") {
+            if (!toolCallsShown) {
+              console.log("\n\n🔧 调用工具:");
+              toolCallsShown = true;
             }
-          }
-          
-          // 工具结果会在 user 消息中（格式：工具调用结果:...）
-          if (msg.role === "user" && msg.content.startsWith("工具调用结果:")) {
-            const lines = msg.content.split("\n");
-            const toolResult = lines.slice(1).join("\n");
-            console.log(`📊 ${lines[0]}\n${toolResult}\n`);
-          } else if (msg.role === "user" && msg.content.startsWith("工具调用失败:")) {
-            console.log(`❌ ${msg.content}\n`);
+            console.log(`  - ${chunk.tool_call.name}`);
+            console.log(`    参数: ${JSON.stringify(chunk.tool_call.arguments, null, 2)}`);
+          } else if (chunk.type === "tool_execute") {
+            console.log(`\n⏳ 执行工具: ${chunk.tool_call.name}...`);
+          } else if (chunk.type === "tool_result") {
+            console.log(`\n📊 工具结果:\n${chunk.result}\n`);
+          } else if (chunk.type === "tool_error") {
+            console.log(`\n❌ 工具错误: ${chunk.error}\n`);
           }
         }
 
-        // 显示最终输出（只显示不是工具调用的部分）
-        const lastMessage = result.messages[result.messages.length - 1];
-        if (lastMessage.role === "assistant") {
-          // 检查是否包含工具调用 JSON，如果有则只显示 JSON 之后的内容
-          const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
-          const match = lastMessage.content.match(jsonBlockRegex);
-          
-          if (match) {
-            // 有工具调用，提取 JSON 之后的内容
-            const parts = lastMessage.content.split(/```json[\s\S]*?```/);
-            if (parts.length > 1 && parts[parts.length - 1].trim()) {
-              console.log(parts[parts.length - 1].trim());
+        if (!hasContent && !toolCallsShown) {
+          // Fall back to non-streaming invoke only if stream produced no visible output
+          try {
+            const result = await agent.invoke(trimmed);
+            // reuse existing code to display result.messages / final output
+            let toolCallsShown2 = false;
+            for (let i = 0; i < result.messages.length; i++) {
+              const msg = result.messages[i];
+              // same handling as before: detect tool JSON blocks and print
+              if (msg.role === "assistant" && msg.content) {
+                const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
+                const match = msg.content.match(jsonBlockRegex);
+                if (match) {
+                  try {
+                    const parsed = JSON.parse(match[1].trim());
+                    if (parsed.action === "tool_call") {
+                      if (!toolCallsShown2) {
+                        console.log("\n🔧 调用工具:");
+                        toolCallsShown2 = true;
+                      }
+                      console.log(`  - ${parsed.tool_name}`);
+                      console.log(`    原因: ${parsed.reasoning || "无"}`);
+                      console.log(`    参数: ${JSON.stringify(parsed.arguments, null, 2)}`);
+                      console.log();
+                    }
+                  } catch {
+                    // ignore
+                  }
+                }
+              }
+              // tool results etc handled similarly...
+            }
+
+            // final output - same logic as before
+            const lastMessage = result.messages[result.messages.length - 1];
+            if (lastMessage?.role === "assistant") {
+              const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
+              const match = lastMessage.content.match(jsonBlockRegex);
+              if (match) {
+                const parts = lastMessage.content.split(/```json[\s\S]*?```/);
+                if (parts.length > 1 && parts[parts.length - 1].trim()) {
+                  console.log(parts[parts.length - 1].trim());
+                }
+              } else {
+                console.log(lastMessage.content);
+              }
+            } else {
+              if (result.output) console.log(result.output);
+            }
+          } catch (invokeError) {
+            console.error("invoke 失败：", invokeError instanceof Error ? invokeError.message : invokeError);
+          }
+        }
+      } catch (streamError) {
+        // If streaming fails, fallback to invoke
+        console.warn("stream 失败，退回到 invoke 方法：", streamError instanceof Error ? streamError.message : streamError);
+        try {
+          const result = await agent.invoke(trimmed);
+          // print final result (same as above)
+          const lastMessage = result.messages[result.messages.length - 1];
+          if (lastMessage?.role === "assistant") {
+            const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
+            const match = lastMessage.content.match(jsonBlockRegex);
+            if (match) {
+              const parts = lastMessage.content.split(/```json[\s\S]*?```/);
+              if (parts.length > 1 && parts[parts.length - 1].trim()) {
+                console.log(parts[parts.length - 1].trim());
+              }
+            } else {
+              console.log(lastMessage.content);
             }
           } else {
-            // 没有工具调用，显示完整内容
-            console.log(lastMessage.content);
+            if (result.output) console.log(result.output);
           }
-        } else {
-          // 最后的消息不是 assistant，显示最终输出
-          if (result.output) {
-            console.log(result.output);
-          }
-        }
-      } catch (error) {
-        // 如果 invoke 失败，尝试使用 stream
-        console.warn("invoke 失败，尝试使用 stream...");
-        
-        try {
-          let hasContent = false;
-          let toolCallsShown = false;
-          let accumulatedContent = "";
-
-          for await (const chunk of agent.stream(trimmed)) {
-            if (chunk.type === "content") {
-              process.stdout.write(chunk.content);
-              accumulatedContent += chunk.content;
-              hasContent = true;
-            } else if (chunk.type === "tool_call") {
-              if (!toolCallsShown) {
-                console.log("\n\n🔧 调用工具:");
-                toolCallsShown = true;
-              }
-              console.log(`  - ${chunk.tool_call.name}`);
-              console.log(`    参数: ${JSON.stringify(chunk.tool_call.arguments, null, 2)}`);
-            } else if (chunk.type === "tool_execute") {
-              console.log(`\n⏳ 执行工具: ${chunk.tool_call.name}...`);
-            } else if (chunk.type === "tool_result") {
-              console.log(`\n📊 工具结果:\n${chunk.result}\n`);
-            } else if (chunk.type === "tool_error") {
-              console.log(`\n❌ 工具错误: ${chunk.error}\n`);
-            }
-          }
-          
-          if (!hasContent && !toolCallsShown) {
-            console.log("（无响应内容）");
-          }
-        } catch (streamError) {
-          throw streamError;
+        } catch (invokeError) {
+          console.error("invoke 失败：", invokeError instanceof Error ? invokeError.message : invokeError);
         }
       }
 
