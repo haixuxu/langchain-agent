@@ -1,13 +1,15 @@
 import { createToolCallingAgent, AgentExecutor } from "langchain/agents";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { ChatOpenAI } from "@langchain/openai";
-import { DynamicStructuredTool, Tool } from "@langchain/core/tools";
+import { DynamicStructuredTool } from "@langchain/core/tools";
 import { z } from "zod";
 import {
   MCPConfig,
   MCPClientWrapper,
   ToolConfirmationManager,
   AuthorizationPolicy,
+  StreamEvent,
+  StreamToolCall,
 } from "@langchain-agent/core";
 import { Tool as MCPTool } from "@modelcontextprotocol/sdk/types.js";
 import { loadMcpTools } from "@langchain/mcp-adapters";
@@ -194,11 +196,221 @@ function convertMCPToolToLangChainTool(
 /**
  * 创建带有MCP工具的LangChain Agent
  */
+function extractMessageContent(message: any): string {
+  const content = message?.content;
+  if (!content) return "";
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    return content
+      .map((part) => {
+        if (!part) return "";
+        if (typeof part === "string") return part;
+        if (part.type === "text" && typeof part.text === "string") {
+          return part.text;
+        }
+        return JSON.stringify(part);
+      })
+      .join("");
+  }
+  if (typeof content === "object" && "toString" in content) {
+    return String(content);
+  }
+  return "";
+}
+
+function normalizeToolCall(toolCall: any, index: number): StreamToolCall {
+  const id = toolCall?.id || undefined;
+  const name =
+    toolCall?.name ||
+    toolCall?.function?.name ||
+    (id ? `tool_${id}` : `tool_${index}`);
+  let rawArguments: string | undefined;
+  let parsedArgs: Record<string, any> | undefined;
+
+  const argsSource =
+    toolCall?.args ??
+    toolCall?.arguments ??
+    toolCall?.function?.arguments ??
+    toolCall?.function?.args;
+
+  if (typeof argsSource === "string") {
+    rawArguments = argsSource;
+    try {
+      parsedArgs = JSON.parse(argsSource);
+    } catch {
+      parsedArgs = undefined;
+    }
+  } else if (argsSource && typeof argsSource === "object") {
+    parsedArgs = argsSource as Record<string, any>;
+    try {
+      rawArguments = JSON.stringify(argsSource);
+    } catch {
+      rawArguments = undefined;
+    }
+  }
+
+  return {
+    id,
+    name,
+    arguments: parsedArgs,
+    rawArguments,
+  };
+}
+
+async function* createLangChainUnifiedStream(
+  executor: AgentExecutor,
+  input: string
+): AsyncGenerator<StreamEvent, void, unknown> {
+  const iterator = await executor.stream(
+    { input },
+    { streamMode: "values" } as any
+  );
+
+  const toolArgumentBuffers = new Map<string, string>();
+  const toolMetadata = new Map<string, StreamToolCall>();
+  const emittedToolExecute = new Set<string>();
+  let lastAssistantContent = "";
+  let finalOutputCandidate = "";
+
+  for await (const chunk of iterator as AsyncIterable<any>) {
+    if (!chunk) {
+      continue;
+    }
+
+    if (typeof chunk.output === "string") {
+      const delta = chunk.output.slice(lastAssistantContent.length);
+      if (delta) {
+        yield { type: "content", content: delta };
+        lastAssistantContent += delta;
+        finalOutputCandidate = lastAssistantContent;
+      }
+      continue;
+    }
+
+    if (chunk.value && typeof chunk.value === "string") {
+      const delta = chunk.value;
+      if (delta) {
+        yield { type: "content", content: delta };
+        lastAssistantContent += delta;
+        finalOutputCandidate = lastAssistantContent;
+      }
+      continue;
+    }
+
+    if (Array.isArray(chunk.messages)) {
+      const lastMessage = chunk.messages[chunk.messages.length - 1];
+      if (!lastMessage) continue;
+
+      const messageType =
+        lastMessage.getType?.() ||
+        lastMessage.constructor?.name?.toLowerCase?.() ||
+        "";
+
+      if (messageType.includes("ai")) {
+        const content = extractMessageContent(lastMessage);
+        const delta = content.slice(lastAssistantContent.length);
+        if (delta) {
+          yield { type: "content", content: delta };
+        }
+        lastAssistantContent = content;
+
+        const toolCalls = Array.isArray(lastMessage.tool_calls)
+          ? lastMessage.tool_calls
+          : [];
+
+        if (toolCalls.length > 0) {
+          const normalized: StreamToolCall[] = toolCalls.map(
+            (tc: unknown, index: number) => normalizeToolCall(tc, index)
+          );
+
+          for (let index = 0; index < normalized.length; index++) {
+            const toolCall = normalized[index];
+            const key = toolCall.id || `${toolCall.name}_${index}`;
+            const previousArgs = toolArgumentBuffers.get(key) || "";
+            const currentArgs = toolCall.rawArguments || "";
+
+            if (!toolMetadata.has(key)) {
+              toolMetadata.set(key, toolCall);
+              yield {
+                type: "tool_call_start",
+                toolCall,
+              };
+            }
+
+            if (currentArgs && currentArgs !== previousArgs) {
+              const argumentDelta = currentArgs.slice(previousArgs.length);
+              if (argumentDelta) {
+                yield {
+                  type: "tool_call_delta",
+                  toolCall,
+                  argumentDelta,
+                };
+              }
+              toolArgumentBuffers.set(key, currentArgs);
+              const existing = toolMetadata.get(key) || toolCall;
+              const updated: StreamToolCall = {
+                id: existing.id ?? toolCall.id,
+                name: existing.name ?? toolCall.name,
+                rawArguments: currentArgs || existing.rawArguments,
+                arguments: toolCall.arguments ?? existing.arguments,
+              };
+              toolMetadata.set(key, updated);
+            }
+          }
+
+          yield {
+            type: "tool_calls_complete",
+            toolCalls: normalized.map((call, index) => {
+              const key = call.id || `${call.name}_${index}`;
+              return toolMetadata.get(key) || call;
+            }),
+          };
+
+          for (let index = 0; index < normalized.length; index++) {
+            const call = normalized[index];
+            const key = call.id || `${call.name}_${index}`;
+            if (!emittedToolExecute.has(key)) {
+              emittedToolExecute.add(key);
+              const meta = toolMetadata.get(key) || call;
+              yield {
+                type: "tool_execute",
+                toolCall: meta,
+              };
+            }
+          }
+
+          finalOutputCandidate = "";
+        } else {
+          finalOutputCandidate = content;
+        }
+      } else if (messageType.includes("tool")) {
+        const content = extractMessageContent(lastMessage);
+        const toolCallId = lastMessage.tool_call_id || undefined;
+        const key =
+          toolCallId ||
+          `${(lastMessage as any)?.name || "tool"}_${toolArgumentBuffers.size}`;
+        const meta = toolMetadata.get(key);
+        yield {
+          type: "tool_result",
+          toolCallId,
+          toolCall: meta,
+          result: content,
+          confirmed: true,
+        };
+      }
+    }
+  }
+
+  if (finalOutputCandidate) {
+    yield { type: "final_output", output: finalOutputCandidate };
+  }
+}
+
 export async function createAgentWithMCPTools(
   config: MCPConfig,
   llmOptions?: LLMOptions
 ): Promise<{
-  agent: any; // AgentExecutor 包装的 agent
+  agent: any; // 包装后的 agent，带统一 stream
   clients: MCPClientWrapper[];
   cleanup: () => Promise<void>;
   tools: any[]; // 工具列表，用于命令显示
@@ -324,8 +536,20 @@ export async function createAgentWithMCPTools(
     }
   };
 
+  const wrappedAgent = {
+    tools,
+    executor: agent,
+    invoke: async (params: { input: string } | string) => {
+      const payload =
+        typeof params === "string" ? { input: params } : params;
+      return agent.invoke(payload);
+    },
+    stream: (input: string): AsyncGenerator<StreamEvent, void, unknown> =>
+      createLangChainUnifiedStream(agent, input),
+  };
+
   return {
-    agent,
+    agent: wrappedAgent,
     clients,
     cleanup,
     tools,

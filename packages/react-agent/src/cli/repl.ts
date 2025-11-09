@@ -1,6 +1,12 @@
 import * as readline from "readline";
 import { ReActAgent } from "../react-agent.js";
-import { MCPConfig, REPLContext, handleCommand } from "@langchain-agent/core";
+import {
+  MCPConfig,
+  REPLContext,
+  handleCommand,
+  StreamConsoleRenderer,
+  StreamEvent,
+} from "@langchain-agent/core";
 import { ReActTool } from "../tool-converter.js";
 
 /**
@@ -58,84 +64,13 @@ export async function startReActREPL(
 
       // Prefer streaming output first
       try {
-        let hasContent = false;
-        let toolCallsShown = false;
-        let accumulatedContent = "";
+        const renderer = new StreamConsoleRenderer();
 
-        for await (const chunk of agent.stream(trimmed)) {
-          if (chunk.type === "content") {
-            process.stdout.write(chunk.content);
-            accumulatedContent += chunk.content;
-            hasContent = true;
-          } else if (chunk.type === "tool_call") {
-            if (!toolCallsShown) {
-              console.log("\n\n🔧 调用工具:");
-              toolCallsShown = true;
-            }
-            console.log(`  - ${chunk.tool_call.name}`);
-            console.log(`    参数: ${JSON.stringify(chunk.tool_call.arguments, null, 2)}`);
-          } else if (chunk.type === "tool_execute") {
-            console.log(`\n⏳ 执行工具: ${chunk.tool_call.name}...`);
-          } else if (chunk.type === "tool_result") {
-            console.log(`\n📊 工具结果:\n${chunk.result}\n`);
-          } else if (chunk.type === "tool_error") {
-            console.log(`\n❌ 工具错误: ${chunk.error}\n`);
-          }
+        for await (const event of agent.stream(trimmed) as AsyncIterable<StreamEvent>) {
+          renderer.handle(event);
         }
 
-        if (!hasContent && !toolCallsShown) {
-          // Fall back to non-streaming invoke only if stream produced no visible output
-          try {
-            const result = await agent.invoke(trimmed);
-            // reuse existing code to display result.messages / final output
-            let toolCallsShown2 = false;
-            for (let i = 0; i < result.messages.length; i++) {
-              const msg = result.messages[i];
-              // same handling as before: detect tool JSON blocks and print
-              if (msg.role === "assistant" && msg.content) {
-                const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
-                const match = msg.content.match(jsonBlockRegex);
-                if (match) {
-                  try {
-                    const parsed = JSON.parse(match[1].trim());
-                    if (parsed.action === "tool_call") {
-                      if (!toolCallsShown2) {
-                        console.log("\n🔧 调用工具:");
-                        toolCallsShown2 = true;
-                      }
-                      console.log(`  - ${parsed.tool_name}`);
-                      console.log(`    原因: ${parsed.reasoning || "无"}`);
-                      console.log(`    参数: ${JSON.stringify(parsed.arguments, null, 2)}`);
-                      console.log();
-                    }
-                  } catch {
-                    // ignore
-                  }
-                }
-              }
-              // tool results etc handled similarly...
-            }
-
-            // final output - same logic as before
-            const lastMessage = result.messages[result.messages.length - 1];
-            if (lastMessage?.role === "assistant") {
-              const jsonBlockRegex = /```json\s*([\s\S]*?)\s*```/;
-              const match = lastMessage.content.match(jsonBlockRegex);
-              if (match) {
-                const parts = lastMessage.content.split(/```json[\s\S]*?```/);
-                if (parts.length > 1 && parts[parts.length - 1].trim()) {
-                  console.log(parts[parts.length - 1].trim());
-                }
-              } else {
-                console.log(lastMessage.content);
-              }
-            } else {
-              if (result.output) console.log(result.output);
-            }
-          } catch (invokeError) {
-            console.error("invoke 失败：", invokeError instanceof Error ? invokeError.message : invokeError);
-          }
-        }
+        renderer.complete();
       } catch (streamError) {
         // If streaming fails, fallback to invoke
         console.warn("stream 失败，退回到 invoke 方法：", streamError instanceof Error ? streamError.message : streamError);

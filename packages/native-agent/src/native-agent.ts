@@ -4,6 +4,8 @@ import {
   ToolConfirmationManager,
   AuthorizationPolicy,
   ConfirmationResult,
+  StreamEvent,
+  StreamToolCall,
 } from "@langchain-agent/core";
 
 /**
@@ -219,26 +221,27 @@ export class NativeAgent {
       const response = await this.client.chat.completions.create({
         model: this.model,
         messages: conversationMessages.map((msg) => {
-          // OpenAI SDK 的消息格式
           const msgObj: any = {
             role: msg.role,
             content: msg.content || null,
           };
-          
-          // assistant 消息可能包含 tool_calls
-          if (msg.role === "assistant" && msg.tool_calls) {
+
+          if (
+            msg.role === "assistant" &&
+            msg.tool_calls &&
+            msg.tool_calls.length > 0
+          ) {
             msgObj.tool_calls = msg.tool_calls.map((tc) => ({
               id: tc.id,
               type: tc.type,
               function: tc.function,
             }));
           }
-          
-          // tool 消息需要 tool_call_id
+
           if (msg.role === "tool" && msg.tool_call_id) {
             msgObj.tool_call_id = msg.tool_call_id;
           }
-          
+
           return msgObj;
         }),
         tools: this.tools.map(nativeToolToOpenAIFunction),
@@ -256,28 +259,31 @@ export class NativeAgent {
       conversationMessages.push({
         role: "assistant",
         content: assistantMessage.content,
-        tool_calls: assistantMessage.tool_calls?.map((tc) => {
-          // 处理函数类型工具调用
-          if (tc.type === "function" && "function" in tc) {
-            return {
-              id: tc.id,
-              type: "function" as const,
-              function: {
-                name: (tc as any).function.name,
-                arguments: (tc as any).function.arguments,
-              },
-            };
-          }
-          // 处理其他类型的工具调用
-          return {
-            id: tc.id,
-            type: "function" as const,
-            function: {
-              name: (tc as any).function?.name || "",
-              arguments: (tc as any).function?.arguments || "{}",
-            },
-          };
-        }),
+        ...(assistantMessage.tool_calls &&
+        assistantMessage.tool_calls.length > 0
+          ? {
+              tool_calls: assistantMessage.tool_calls.map((tc) => {
+                if (tc.type === "function" && "function" in tc) {
+                  return {
+                    id: tc.id,
+                    type: "function" as const,
+                    function: {
+                      name: (tc as any).function.name,
+                      arguments: (tc as any).function.arguments,
+                    },
+                  };
+                }
+                return {
+                  id: tc.id,
+                  type: "function" as const,
+                  function: {
+                    name: (tc as any).function?.name || "",
+                    arguments: (tc as any).function?.arguments || "{}",
+                  },
+                };
+              }),
+            }
+          : {}),
       });
 
       // 如果没有工具调用，返回最终结果
@@ -349,7 +355,7 @@ export class NativeAgent {
   /**
    * 流式调用 agent
    */
-  async *stream(input: string): AsyncGenerator<any, void, unknown> {
+  async *stream(input: string): AsyncGenerator<StreamEvent, void, unknown> {
     // 添加用户消息
     this.messages.push({
       role: "user",
@@ -373,7 +379,11 @@ export class NativeAgent {
           };
           
           // assistant 消息可能包含 tool_calls
-          if (msg.role === "assistant" && msg.tool_calls) {
+          if (
+            msg.role === "assistant" &&
+            msg.tool_calls &&
+            msg.tool_calls.length > 0
+          ) {
             msgObj.tool_calls = msg.tool_calls.map((tc) => ({
               id: tc.id,
               type: tc.type,
@@ -397,7 +407,7 @@ export class NativeAgent {
         content: "",
         tool_calls: [],
       };
-      let currentToolCall: any = null;
+      const toolCallCache: Map<number, StreamToolCall> = new Map();
 
       // 处理流式响应
       for await (const chunk of stream) {
@@ -436,12 +446,43 @@ export class NativeAgent {
                 toolCallDelta.function?.arguments || "";
             }
 
-            // 输出工具调用信息
-            if (toolCallDelta.function?.name && !currentToolCall) {
-              currentToolCall = assistantMessage.tool_calls[index];
+            const cached = toolCallCache.get(index) || {
+              id: assistantMessage.tool_calls[index].id || undefined,
+              name:
+                assistantMessage.tool_calls[index].function?.name || "",
+              rawArguments:
+                assistantMessage.tool_calls[index].function?.arguments || "",
+            };
+
+            if (toolCallDelta.function?.name && !toolCallCache.has(index)) {
+              toolCallCache.set(index, {
+                id: cached.id,
+                name: cached.name,
+                rawArguments: cached.rawArguments,
+              });
               yield {
                 type: "tool_call_start",
-                tool_call: assistantMessage.tool_calls[index],
+                toolCall: {
+                  id: cached.id,
+                  name: cached.name,
+                  rawArguments: cached.rawArguments,
+                },
+              };
+            } else {
+              cached.rawArguments = (cached.rawArguments || "") +
+                (toolCallDelta.function?.arguments || "");
+              toolCallCache.set(index, cached);
+            }
+
+            if (toolCallDelta.function?.arguments) {
+              yield {
+                type: "tool_call_delta",
+                toolCall: {
+                  id: cached.id,
+                  name: cached.name,
+                  rawArguments: cached.rawArguments,
+                },
+                argumentDelta: toolCallDelta.function?.arguments || "",
               };
             }
           }
@@ -460,33 +501,54 @@ export class NativeAgent {
       conversationMessages.push({
         role: "assistant",
         content: assistantMessage.content || null,
-        tool_calls: assistantMessage.tool_calls?.map((tc: any) => ({
-          id: tc.id,
-          type: tc.type as "function",
-          function: {
-            name: tc.function.name,
-            arguments: tc.function.arguments,
-          },
-        })),
+        ...(assistantMessage.tool_calls &&
+        assistantMessage.tool_calls.length > 0
+          ? {
+              tool_calls: assistantMessage.tool_calls.map((tc: any) => ({
+                id: tc.id,
+                type: tc.type as "function",
+                function: {
+                  name: tc.function.name,
+                  arguments: tc.function.arguments,
+                },
+              })),
+            }
+          : {}),
       });
 
       // 如果没有工具调用，返回最终结果
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
+        if (assistantMessage.content) {
+          yield { type: "final_output", output: assistantMessage.content };
+        }
         this.messages = conversationMessages;
         return;
       }
 
-      // 执行所有工具调用
+      const normalizedToolCalls: StreamToolCall[] = assistantMessage.tool_calls.map(
+        (tc: any) => ({
+          id: tc.id,
+          name: tc.function?.name || "",
+          rawArguments: tc.function?.arguments || "",
+        })
+      );
+
       yield {
-        type: "tool_calls",
-        tool_calls: assistantMessage.tool_calls,
+        type: "tool_calls_complete",
+        toolCalls: normalizedToolCalls,
       };
 
       for (const toolCall of assistantMessage.tool_calls) {
         try {
+          const executingTool: StreamToolCall = {
+            id: toolCall.id,
+            name: toolCall.function.name,
+            rawArguments: toolCall.function.arguments,
+          };
+
           yield {
             type: "tool_execute",
-            tool_call: toolCall,
+            toolCall: executingTool,
           };
 
           const executionResult = await this.executeToolCall({
@@ -510,7 +572,8 @@ export class NativeAgent {
 
           yield {
             type: "tool_result",
-            tool_call_id: toolCall.id,
+            toolCallId: toolCall.id,
+            toolCall: executingTool,
             result: executionResult.result,
             confirmed: executionResult.confirmed,
           };
@@ -525,7 +588,12 @@ export class NativeAgent {
           const errorMsg = error instanceof Error ? error.message : String(error);
           yield {
             type: "tool_error",
-            tool_call_id: toolCall.id,
+            toolCallId: toolCall.id,
+            toolCall: {
+              id: toolCall.id,
+              name: toolCall.function.name,
+              rawArguments: toolCall.function.arguments,
+            },
             error: errorMsg,
           };
 
@@ -537,7 +605,9 @@ export class NativeAgent {
         }
       }
 
-      currentToolCall = null;
+      if (assistantMessage.content) {
+        yield { type: "final_output", output: assistantMessage.content };
+      }
     }
 
     // 更新消息历史

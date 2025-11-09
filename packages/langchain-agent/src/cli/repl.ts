@@ -1,6 +1,12 @@
 import * as readline from "readline";
 // Agent 类型已改为 any，因为 createToolCallingAgent 返回的是 Runnable 类型
-import { MCPConfig, REPLContext, handleCommand } from "@langchain-agent/core";
+import {
+  MCPConfig,
+  REPLContext,
+  handleCommand,
+  StreamConsoleRenderer,
+  StreamEvent,
+} from "@langchain-agent/core";
 
 /**
  * 启动交互式REPL
@@ -60,77 +66,20 @@ export async function startREPL(
     try {
       console.log("\n🤔 思考中...\n");
 
-      // AgentExecutor 的输入格式是 { input: string }
-      // 先尝试使用 invoke 方法获取完整响应
-      // 优先使用流式输出：agent.stream 可作为首选路径，保证增量显示
+      // 优先使用统一的流式输出
       try {
-        const stream = await agent.stream({ input: trimmed }, { streamMode: "values" });
+        const renderer = new StreamConsoleRenderer();
 
-        let hasOutput = false;
-        for await (const chunk of stream) {
-          if (process.env.DEBUG === "true") {
-            console.log("Chunk:", JSON.stringify(chunk, null, 2));
-          }
-
-          // 支持多种 chunk 形态：{ output }, { messages }, { value }
-          if (chunk.output) {
-            process.stdout.write(String(chunk.output));
-            hasOutput = true;
-          } else if (chunk.messages && Array.isArray(chunk.messages)) {
-            const lastMessage = chunk.messages[chunk.messages.length - 1];
-            if (lastMessage) {
-              const messageType = lastMessage.getType?.() || lastMessage.constructor.name;
-
-              if (messageType === "ai" || messageType.includes("AI")) {
-                const aiMessage = lastMessage as any;
-                if (aiMessage.content) {
-                  const content = typeof aiMessage.content === "string"
-                    ? aiMessage.content
-                    : JSON.stringify(aiMessage.content);
-                  process.stdout.write(content);
-                  hasOutput = true;
-                }
-
-                if (aiMessage.tool_calls && aiMessage.tool_calls.length > 0) {
-                  console.log("\n\n🔧 调用工具:");
-                  for (const toolCall of aiMessage.tool_calls) {
-                    console.log(`  - ${toolCall.name}`);
-                    if (toolCall.args) {
-                      console.log(`    参数: ${JSON.stringify(toolCall.args, null, 2)}`);
-                    }
-                  }
-                  console.log();
-                }
-              } else if (messageType === "tool" || messageType.includes("Tool")) {
-                const toolMessage = lastMessage as any;
-                if (toolMessage.content) {
-                  console.log(`\n📊 工具结果:\n${toolMessage.content}\n`);
-                  hasOutput = true;
-                }
-              }
-            }
-          } else if (chunk.value) {
-            // LangChain 某些版本可能产出 value 字段
-            process.stdout.write(String(chunk.value));
-            hasOutput = true;
-          }
+        for await (const event of agent.stream(trimmed) as AsyncIterable<StreamEvent>) {
+          renderer.handle(event);
         }
 
-        if (!hasOutput) {
-          // fallback：尝试调用 invoke 以获取最终结果（非流）
-          try {
-            const result = await agent.invoke({ input: trimmed });
-            if (result.output) console.log(result.output);
-            else console.log("（无响应内容）");
-          } catch (e) {
-            console.log("（无响应内容）");
-          }
-        }
+        renderer.complete();
       } catch (streamError) {
         // 如果流式调用失败，再退回到 invoke
         console.warn("stream 调用失败，退回到 invoke 方法：", streamError instanceof Error ? streamError.message : streamError);
         try {
-          const result = await agent.invoke({ input: trimmed });
+          const result = await agent.invoke(trimmed);
 
           if (process.env.DEBUG === "true") {
             console.log("完整响应结构:", JSON.stringify(result, null, 2));

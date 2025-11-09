@@ -3,6 +3,8 @@ import { ReActTool } from "./tool-converter.js";
 import {
   ToolConfirmationManager,
   AuthorizationPolicy,
+  StreamEvent,
+  StreamToolCall,
 } from "@langchain-agent/core";
 
 /**
@@ -371,7 +373,7 @@ ${toolDescriptions}
   /**
    * 流式调用 agent
    */
-  async *stream(input: string): AsyncGenerator<any, void, unknown> {
+  async *stream(input: string): AsyncGenerator<StreamEvent, void, unknown> {
     // 添加用户消息
     this.messages.push({
       role: "user",
@@ -429,20 +431,33 @@ ${toolDescriptions}
 
       // 如果没有工具调用，返回最终结果
       if (!toolCall) {
+        if (content) {
+          yield { type: "final_output", output: content };
+        }
         this.messages = conversationMessages;
         return;
       }
 
-      // 执行工具调用
+      const toolCallInfo: StreamToolCall = {
+        name: toolCall.name,
+        rawArguments: JSON.stringify(toolCall.arguments),
+        arguments: toolCall.arguments,
+      };
+
       yield {
-        type: "tool_call",
-        tool_call: toolCall,
+        type: "tool_call_start",
+        toolCall: toolCallInfo,
+      };
+
+      yield {
+        type: "tool_calls_complete",
+        toolCalls: [toolCallInfo],
       };
 
       try {
         yield {
           type: "tool_execute",
-          tool_call: toolCall,
+          toolCall: toolCallInfo,
         };
 
         const executionResult = await this.executeToolCall(toolCall);
@@ -459,7 +474,7 @@ ${toolDescriptions}
 
         yield {
           type: "tool_result",
-          tool_call: toolCall,
+          toolCall: toolCallInfo,
           result: executionResult.result,
           confirmed: executionResult.confirmed,
         };
@@ -473,7 +488,7 @@ ${toolDescriptions}
         const errorMsg = error instanceof Error ? error.message : String(error);
         yield {
           type: "tool_error",
-          tool_call: toolCall,
+          toolCall: toolCallInfo,
           error: errorMsg,
         };
 
@@ -485,6 +500,12 @@ ${toolDescriptions}
 
       // 重置累积内容
       accumulatedContent = "";
+    }
+
+    // 若循环自然结束，补充最终输出
+    const lastMessage = conversationMessages[conversationMessages.length - 1];
+    if (lastMessage?.role === "assistant" && lastMessage.content) {
+      yield { type: "final_output", output: lastMessage.content };
     }
 
     // 更新消息历史

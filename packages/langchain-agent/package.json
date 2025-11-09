@@ -7,7 +7,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "cd ../.. && tsx packages/langchain-agent/src/index.ts"
+    "dev": "cd ../.. && tsx packages/langchain-agent/src/index.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "langchain",
@@ -22,7 +25,10 @@
     "@langchain/mcp-adapters": "^0.6.0",
     "@langchain/openai": "^0.6.x",
     "dotenv": "^17.2.3",
-    "langchain": "^0.3.x"
+    "langchain": "^0.3.x",
+    "@langchain/core": "^0.3.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "zod": "^3.23.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

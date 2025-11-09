@@ -1,6 +1,12 @@
 import * as readline from "readline";
 import { NativeAgent } from "../native-agent.js";
-import { MCPConfig, REPLContext, handleCommand } from "@langchain-agent/core";
+import {
+  MCPConfig,
+  REPLContext,
+  handleCommand,
+  StreamConsoleRenderer,
+  StreamEvent,
+} from "@langchain-agent/core";
 import { NativeTool } from "../tool-converter.js";
 
 /**
@@ -58,46 +64,13 @@ export async function startNativeREPL(
 
       // Prefer streaming output first — stream is non-blocking and shows increments
       try {
-        let hasContent = false;
-        let currentToolCalls: any[] = [];
-        let toolCallsShown = false;
+        const renderer = new StreamConsoleRenderer();
 
-        for await (const chunk of agent.stream(trimmed)) {
-          if (chunk.type === "content") {
-            process.stdout.write(chunk.content);
-            hasContent = true;
-          } else if (chunk.type === "tool_call_start") {
-            // 工具调用开始（确认管理器会处理确认提示）
-            currentToolCalls.push(chunk.tool_call);
-          } else if (chunk.type === "tool_calls") {
-            currentToolCalls = chunk.tool_calls;
-          } else if (chunk.type === "tool_result") {
-            // 工具结果（确认管理器已显示，这里不再重复显示）
-            if (chunk.confirmed === false) {
-              console.log(`\n⚠️  工具调用被取消或未确认\n`);
-            }
-          } else if (chunk.type === "tool_error") {
-            console.log(`\n❌ 工具错误: ${chunk.error}\n`);
-          } else if (chunk.type === "stopped") {
-            console.log(`\n\n${chunk.message}`);
-            hasContent = true; // 标记为有内容，避免显示"无响应"
-          }
+        for await (const event of agent.stream(trimmed) as AsyncIterable<StreamEvent>) {
+          renderer.handle(event);
         }
 
-        if (!hasContent && !toolCallsShown) {
-          // If stream produced no visible output, fall back to non-streaming invoke
-          try {
-            const result = await agent.invoke(trimmed);
-            if (result.output) {
-              console.log("\n" + result.output);
-            } else {
-              console.log("（无响应内容）");
-            }
-          } catch (invokeError) {
-            // both stream and invoke failed
-            throw invokeError;
-          }
-        }
+        renderer.complete();
       } catch (streamError) {
         // If streaming failed (older OpenAI SDK, network), fallback to invoke
         console.warn("stream 失败，退回到 invoke 方法：", streamError instanceof Error ? streamError.message : streamError);

@@ -11,6 +11,7 @@
   "references": [
     { "path": "./packages/core" },
     { "path": "./packages/langchain-agent" },
-    { "path": "./packages/native-agent" }
+    { "path": "./packages/native-agent" },
+    { "path": "./packages/react-agent" }
   ]
 }

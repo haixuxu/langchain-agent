@@ -11,7 +11,10 @@
     "dev:react": "pnpm --filter react-agent dev",
     "build:langchain": "pnpm --filter langchain-agent build",
     "build:native": "pnpm --filter native-agent build",
-    "build:react": "pnpm --filter react-agent build"
+    "build:react": "pnpm --filter react-agent build",
+    "lint": "pnpm -r lint",
+    "lint:fix": "pnpm -r lint -- --fix",
+    "typecheck": "pnpm -r typecheck"
   },
   "keywords": [
     "langchain",
@@ -23,7 +26,12 @@
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "@types/node": "^22.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.46.3",
+    "@typescript-eslint/parser": "^8.46.3",
+    "eslint": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
     "tsx": "^4.0.0",
     "typescript": "^5.6.0"
   }

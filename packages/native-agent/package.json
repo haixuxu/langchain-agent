@@ -7,7 +7,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "cd ../.. && tsx packages/native-agent/src/index.ts"
+    "dev": "cd ../.. && tsx packages/native-agent/src/index.ts",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "openai",
@@ -21,7 +24,8 @@
   "dependencies": {
     "@langchain-agent/core": "workspace:*",
     "dotenv": "^17.2.3",
-    "openai": "^6.7.0"
+    "openai": "^6.7.0",
+    "@modelcontextprotocol/sdk": "^1.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
