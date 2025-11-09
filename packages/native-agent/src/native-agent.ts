@@ -108,7 +108,7 @@ export class NativeAgent {
       serverName: tool.serverName,
     };
 
-    // 检查是否需要确认
+    // 检查是否需要确认：根据策略判断是否需要用户授权
     const needsConfirmation = await this.confirmationManager.shouldConfirm(
       toolCallInfo
     );
@@ -157,14 +157,14 @@ export class NativeAgent {
       };
     }
 
-    // 显示工具调用信息
+    // 显示工具调用信息，便于在终端中提示用户
     this.confirmationManager.displayToolCall(toolCallInfo, false);
 
     try {
       // 调用 MCP 工具
       const result = await tool.client.callTool(tool.mcpToolName, args);
       
-      // 处理返回结果
+      // 处理返回结果：兼容数组和单值的 MCP 回复
       let resultStr: string;
       if (result.content && Array.isArray(result.content)) {
         resultStr = result.content
@@ -182,7 +182,7 @@ export class NativeAgent {
         resultStr = JSON.stringify(result);
       }
 
-      // 显示工具结果
+      // 显示工具结果并同步确认状态
       this.confirmationManager.displayToolResult(toolCallInfo, resultStr, true);
 
       return {
@@ -217,7 +217,7 @@ export class NativeAgent {
     while (iterations < this.maxIterations) {
       iterations++;
 
-      // 调用 OpenAI API
+      // 调用 OpenAI API：模型可选择直接回答或请求工具
       const response = await this.client.chat.completions.create({
         model: this.model,
         messages: conversationMessages.map((msg) => {
@@ -255,7 +255,7 @@ export class NativeAgent {
 
       const assistantMessage = choice.message;
 
-      // 添加到对话历史
+      // 添加到对话历史，保存模型在该轮的完整输出及工具请求
       conversationMessages.push({
         role: "assistant",
         content: assistantMessage.content,
@@ -286,7 +286,7 @@ export class NativeAgent {
           : {}),
       });
 
-      // 如果没有工具调用，返回最终结果
+      // 如果没有工具调用，表示模型已经给出最终答案
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         const finalOutput = assistantMessage.content || "";
         // 更新消息历史
@@ -297,7 +297,7 @@ export class NativeAgent {
         };
       }
 
-      // 执行所有工具调用
+      // 执行所有工具调用：逐一处理模型的函数调用
       for (const toolCall of assistantMessage.tool_calls) {
         try {
           // 处理不同类型的工具调用
@@ -314,7 +314,7 @@ export class NativeAgent {
             },
           };
           
-          const executionResult = await this.executeToolCall(toolCallData);
+          const executionResult = await this.executeToolCall(toolCallData); // 执行 MCP 工具并处理确认
 
           // 如果用户要求停止，提前退出
           if (executionResult.stop) {
@@ -325,14 +325,14 @@ export class NativeAgent {
             };
           }
 
-          // 添加工具结果消息（无论是否确认）
+          // 添加工具结果消息（无论是否确认），供下一轮模型参考
           conversationMessages.push({
             role: "tool",
             content: executionResult.result,
             tool_call_id: toolCall.id,
           });
         } catch (error) {
-          // 添加错误消息
+          // 添加错误消息，便于模型重试或给出失败说明
           const errorMsg = error instanceof Error ? error.message : String(error);
           conversationMessages.push({
             role: "tool",
@@ -368,7 +368,7 @@ export class NativeAgent {
     while (iterations < this.maxIterations) {
       iterations++;
 
-      // 调用 OpenAI API（流式）
+      // 调用 OpenAI API（流式模式），逐步接收模型增量输出和可能的工具调用
       const stream = await this.client.chat.completions.create({
         model: this.model,
         messages: conversationMessages.map((msg) => {
@@ -418,12 +418,12 @@ export class NativeAgent {
 
         const delta = choice.delta;
 
-        // 累积内容
+        // 累积内容片段，以便构建完整回答
         if (delta.content) {
           assistantMessage.content = (assistantMessage.content || "") + delta.content;
         }
 
-        // 处理工具调用
+        // 处理工具调用：跟踪流式增量中的函数调用信息
         if (delta.tool_calls) {
           for (const toolCallDelta of delta.tool_calls) {
             const index = toolCallDelta.index || 0;
@@ -488,7 +488,7 @@ export class NativeAgent {
           }
         }
 
-        // 输出内容增量
+        // 输出内容增量，向上游传递模型实时生成的文本
         if (delta.content) {
           yield {
             type: "content",
@@ -516,7 +516,7 @@ export class NativeAgent {
           : {}),
       });
 
-      // 如果没有工具调用，返回最终结果
+      // 如果没有工具调用，说明模型已完成回答，直接返回
       if (!assistantMessage.tool_calls || assistantMessage.tool_calls.length === 0) {
         if (assistantMessage.content) {
           yield { type: "final_output", output: assistantMessage.content };
@@ -533,6 +533,7 @@ export class NativeAgent {
         })
       );
 
+      // 通知上游：本轮工具调用信息已汇总
       yield {
         type: "tool_calls_complete",
         toolCalls: normalizedToolCalls,
@@ -546,6 +547,7 @@ export class NativeAgent {
             rawArguments: toolCall.function.arguments,
           };
 
+          // 广播正在执行的工具，便于外层展示进度
           yield {
             type: "tool_execute",
             toolCall: executingTool,
@@ -570,6 +572,7 @@ export class NativeAgent {
             return;
           }
 
+          // 将执行结果回传给调用方，指明确认状态
           yield {
             type: "tool_result",
             toolCallId: toolCall.id,
@@ -586,6 +589,7 @@ export class NativeAgent {
           });
         } catch (error) {
           const errorMsg = error instanceof Error ? error.message : String(error);
+          // 将工具错误回传，方便上层处理或提示用户
           yield {
             type: "tool_error",
             toolCallId: toolCall.id,
@@ -605,6 +609,7 @@ export class NativeAgent {
         }
       }
 
+      // 返回最终文本，结束本轮循环
       if (assistantMessage.content) {
         yield { type: "final_output", output: assistantMessage.content };
       }

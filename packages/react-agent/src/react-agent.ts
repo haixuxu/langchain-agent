@@ -87,6 +87,7 @@ export class ReActAgent {
    * 构建包含工具信息的 system prompt
    */
   private buildSystemPrompt(): string {
+    // 将工具描述嵌入 system prompt，引导模型以指定 JSON 格式调用工具
     const toolDescriptions = this.tools.map((tool) => {
       const params = tool.function.parameters.properties || {};
       const required = tool.function.parameters.required || [];
@@ -191,7 +192,7 @@ ${toolDescriptions}
       serverName: tool.serverName,
     };
 
-    // 检查是否需要确认
+    // 检查是否需要确认：结合策略判断是否要询问用户
     const needsConfirmation = await this.confirmationManager.shouldConfirm(
       toolCallInfo
     );
@@ -237,14 +238,14 @@ ${toolDescriptions}
       };
     }
 
-    // 显示工具调用信息
+    // 显示工具调用信息，便于调试与展示
     this.confirmationManager.displayToolCall(toolCallInfo, false);
 
     try {
       // 调用 MCP 工具
       const result = await tool.client.callTool(tool.mcpToolName, toolCall.arguments);
       
-      // 处理返回结果
+      // 处理返回结果，兼容 array/text 等不同返回类型
       let resultStr: string;
       if (result.content && Array.isArray(result.content)) {
         resultStr = result.content
@@ -262,7 +263,7 @@ ${toolDescriptions}
         resultStr = JSON.stringify(result);
       }
 
-      // 显示工具结果
+      // 显示工具结果并同步状态
       this.confirmationManager.displayToolResult(toolCallInfo, resultStr, true);
 
       return {
@@ -297,7 +298,7 @@ ${toolDescriptions}
     while (iterations < this.maxIterations) {
       iterations++;
 
-      // 调用 OpenAI API（不使用 tools 参数）
+      // 调用 OpenAI API（不使用 function calling），依赖 prompt 指引模型输出
       const response = await this.client.chat.completions.create({
         model: this.model,
         messages: conversationMessages.map((msg) => ({
@@ -315,16 +316,16 @@ ${toolDescriptions}
       const assistantMessage = choice.message;
       const content = assistantMessage.content || "";
 
-      // 添加到对话历史
+      // 添加到对话历史，使 LLM 在下一轮参考本轮输出
       conversationMessages.push({
         role: "assistant",
         content: content,
       });
 
-      // 尝试解析工具调用
+      // 尝试解析工具调用：模型需输出 JSON 代码块
       const toolCall = this.parseToolCall(content);
 
-      // 如果没有工具调用，返回最终结果
+      // 如果没有工具调用，说明模型已经得出最终回答
       if (!toolCall) {
         this.messages = conversationMessages;
         return {
@@ -333,7 +334,7 @@ ${toolDescriptions}
         };
       }
 
-      // 执行工具调用
+      // 执行工具调用：确认、实际调用 MCP，并将结果反馈
       try {
         const executionResult = await this.executeToolCall(toolCall);
 
@@ -346,13 +347,13 @@ ${toolDescriptions}
           };
         }
 
-        // 添加工具结果消息
+        // 添加工具结果消息，引导模型继续推理
         conversationMessages.push({
           role: "user",
           content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${executionResult.result}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
         });
       } catch (error) {
-        // 添加错误消息
+        // 添加错误消息，让模型有机会重新规划
         const errorMsg = error instanceof Error ? error.message : String(error);
         conversationMessages.push({
           role: "user",
@@ -387,7 +388,7 @@ ${toolDescriptions}
     while (iterations < this.maxIterations) {
       iterations++;
 
-      // 调用 OpenAI API（流式，不使用 tools 参数）
+      // 调用 OpenAI API（流式，不使用 tools 参数），依赖 prompt 解析工具调用
       const stream = await this.client.chat.completions.create({
         model: this.model,
         messages: conversationMessages.map((msg) => ({
@@ -400,7 +401,7 @@ ${toolDescriptions}
 
       let content = "";
 
-      // 处理流式响应
+      // 处理流式响应，逐步累计回答文本
       for await (const chunk of stream) {
         const choice = chunk.choices[0];
         if (!choice || !choice.delta) {
@@ -409,7 +410,7 @@ ${toolDescriptions}
 
         const delta = choice.delta;
 
-        // 累积内容
+        // 累积内容并向上游发送实时文本
         if (delta.content) {
           content += delta.content;
           accumulatedContent += delta.content;
@@ -420,7 +421,7 @@ ${toolDescriptions}
         }
       }
 
-      // 添加到对话历史
+      // 添加到对话历史，保持对话上下文
       conversationMessages.push({
         role: "assistant",
         content: content,
@@ -429,7 +430,7 @@ ${toolDescriptions}
       // 尝试解析工具调用
       const toolCall = this.parseToolCall(content);
 
-      // 如果没有工具调用，返回最终结果
+      // 如果没有工具调用，输出最终结果并结束流
       if (!toolCall) {
         if (content) {
           yield { type: "final_output", output: content };
@@ -444,11 +445,13 @@ ${toolDescriptions}
         arguments: toolCall.arguments,
       };
 
+      // 通知上游：工具调用开始
       yield {
         type: "tool_call_start",
         toolCall: toolCallInfo,
       };
 
+      // 该实现一次只触发一个工具，直接发送 complete
       yield {
         type: "tool_calls_complete",
         toolCalls: [toolCallInfo],
@@ -472,6 +475,7 @@ ${toolDescriptions}
           return;
         }
 
+        // 返回成功的工具结果
         yield {
           type: "tool_result",
           toolCall: toolCallInfo,
@@ -485,6 +489,7 @@ ${toolDescriptions}
           content: `工具调用结果:\n工具: ${toolCall.name}\n结果: ${executionResult.result}\n\n请基于这个结果继续回答用户的问题。如果需要更多信息，可以继续调用工具。`,
         });
       } catch (error) {
+        // 工具执行失败时广播错误，让调用方更新 UI
         const errorMsg = error instanceof Error ? error.message : String(error);
         yield {
           type: "tool_error",
@@ -498,7 +503,7 @@ ${toolDescriptions}
         });
       }
 
-      // 重置累积内容
+      // 重置累积内容，为下一轮思考重新收集文本
       accumulatedContent = "";
     }
 
